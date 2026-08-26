@@ -1,0 +1,131 @@
+name: Deploy to ECS
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: rag-chatbot
+  ECS_CLUSTER: rag-chatbot-cluster
+  TASK_FAMILY: rag-chatbot-task
+  SUBNET_ID: subnet-03c104887f4cf0d77
+  SECURITY_GROUP_ID: sg-0917ac30496b66122
+  CONTAINER_NAME: rag-chatbot
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Update task definition with new image
+        id: task-def
+        run: |
+          jq --arg IMAGE "${{ steps.build-image.outputs.image }}" \
+            '.containerDefinitions[0].image = $IMAGE' \
+            ecs-task-definition.json > new-task-definition.json
+          cat new-task-definition.json
+
+      - name: Register new task definition revision
+        id: register-task-def
+        run: |
+          REVISION=$(aws ecs register-task-definition \
+            --cli-input-json file://new-task-definition.json \
+            --region ${{ env.AWS_REGION }} \
+            --query 'taskDefinition.revision' \
+            --output text)
+          echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
+          echo "New task definition revision: $REVISION"
+
+      - name: Stop currently running task(s)
+        run: |
+          TASK_ARNS=$(aws ecs list-tasks \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --family ${{ env.TASK_FAMILY }} \
+            --desired-status RUNNING \
+            --region ${{ env.AWS_REGION }} \
+            --query 'taskArns' \
+            --output text)
+
+          if [ -n "$TASK_ARNS" ]; then
+            for TASK_ARN in $TASK_ARNS; do
+              echo "Stopping task: $TASK_ARN"
+              aws ecs stop-task \
+                --cluster ${{ env.ECS_CLUSTER }} \
+                --task "$TASK_ARN" \
+                --region ${{ env.AWS_REGION }} \
+                --no-cli-pager > /dev/null
+            done
+          else
+            echo "No running tasks found to stop."
+          fi
+
+      - name: Run new task
+        id: run-task
+        run: |
+          NEW_TASK_ARN=$(aws ecs run-task \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --task-definition ${{ env.TASK_FAMILY }}:${{ steps.register-task-def.outputs.revision }} \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[${{ env.SUBNET_ID }}],securityGroups=[${{ env.SECURITY_GROUP_ID }}],assignPublicIp=ENABLED}" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'tasks[0].taskArn' \
+            --output text)
+          echo "task_arn=$NEW_TASK_ARN" >> "$GITHUB_OUTPUT"
+          echo "New task launched: $NEW_TASK_ARN"
+
+      - name: Wait for task to be running
+        run: |
+          aws ecs wait tasks-running \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --tasks ${{ steps.run-task.outputs.task_arn }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Get new public IP
+        run: |
+          ENI_ID=$(aws ecs describe-tasks \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --tasks ${{ steps.run-task.outputs.task_arn }} \
+            --region ${{ env.AWS_REGION }} \
+            --query "tasks[0].attachments[0].details[?name=='networkInterfaceId'].value" \
+            --output text)
+
+          PUBLIC_IP=$(aws ec2 describe-network-interfaces \
+            --network-interface-ids "$ENI_ID" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'NetworkInterfaces[0].Association.PublicIp' \
+            --output text)
+
+          echo "### Deployment complete! :rocket:" >> "$GITHUB_STEP_SUMMARY"
+          echo "**New public IP:** \`$PUBLIC_IP\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "**URL:** http://$PUBLIC_IP:8000/" >> "$GITHUB_STEP_SUMMARY"
+          echo "New public IP: $PUBLIC_IP"
