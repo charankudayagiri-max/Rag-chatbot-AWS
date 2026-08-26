@@ -24,9 +24,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
       - name: Debug secret length
         run: |
-        echo "Role ARN length: ${#AWS_ROLE_ARN}"
+          echo "Role ARN length: ${#AWS_ROLE_ARN}"
         env:
           AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
 
