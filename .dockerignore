@@ -1,0 +1,17 @@
+myenv/
+.venv/
+venv/
+
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+
+.env
+.env.*
+
+.git/
+.vscode/
+
+# Keep this only if ChromaDB should NOT be included in the Docker image
+data/

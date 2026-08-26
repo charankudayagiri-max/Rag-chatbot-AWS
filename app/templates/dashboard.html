@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Production Observability - RAG Chatbot Monitor</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-primary: #08080c;
+            --bg-secondary: #0f0f18;
+            --surface: rgba(255, 255, 255, 0.03);
+            --border: rgba(255, 255, 255, 0.06);
+            --border-hover: rgba(255, 255, 255, 0.12);
+            --border-focus: rgba(99, 102, 241, 0.4);
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent: #6366f1;
+            --accent-light: #818cf8;
+            --accent-glow: rgba(99, 102, 241, 0.15);
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --radius: 16px;
+            --radius-sm: 8px;
+            --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+        }
+
+        /* ── Header ───────────────────────────────────────── */
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 40px;
+            background: rgba(8, 8, 12, 0.6);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header__logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header__icon {
+            font-size: 24px;
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, var(--accent) 0%, #4338ca 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+        }
+
+        .header__title h1 {
+            font-size: 20px;
+            font-weight: 600;
+            background: linear-gradient(to right, #ffffff, var(--text-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header__title p {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .header__actions {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .btn-chat {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 10px 20px;
+            border-radius: var(--radius-sm);
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all var(--transition);
+        }
+
+        .btn-chat:hover {
+            background: rgba(255,255,255,0.08);
+            border-color: var(--border-hover);
+            transform: translateY(-1px);
+        }
+
+        .refresh-badge {
+            font-size: 12px;
+            color: var(--success);
+            background: rgba(16, 185, 129, 0.08);
+            border: 1px solid rgba(16, 185, 129, 0.15);
+            padding: 6px 12px;
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .refresh-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--success);
+            border-radius: 50%;
+            animation: pulse 1.8s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+
+        /* ── Layout Grid ──────────────────────────────────── */
+        main {
+            flex: 1;
+            padding: 40px;
+            max-width: 1400px;
+            margin: 0 auto;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 30px;
+        }
+
+        /* ── Metric Cards ─────────────────────────────────── */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 20px;
+        }
+
+        .metric-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+            position: relative;
+            overflow: hidden;
+            transition: all var(--transition);
+        }
+
+        .metric-card:hover {
+            border-color: var(--border-hover);
+            box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+            transform: translateY(-2px);
+        }
+
+        .metric-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; width: 4px; height: 100%;
+            background: var(--accent);
+            opacity: 0.7;
+        }
+
+        .metric-card--success::before { background: var(--success); }
+        .metric-card--warning::before { background: var(--warning); }
+        .metric-card--danger::before { background: var(--danger); }
+
+        .metric-card__header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 500;
+            margin-bottom: 12px;
+        }
+
+        .metric-card__value {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.5px;
+        }
+
+        .metric-card__desc {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+
+        /* ── Charts Row ───────────────────────────────────── */
+        .charts-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 24px;
+        }
+
+        @media (max-width: 1024px) {
+            .charts-row { grid-template-columns: 1fr; }
+        }
+
+        .chart-box {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .chart-box__title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 12px;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 280px;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* ── Tasks Table ──────────────────────────────────── */
+        .table-box {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .table-container {
+            width: 100%;
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 13px;
+        }
+
+        th {
+            color: var(--text-secondary);
+            font-weight: 500;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+        }
+
+        td {
+            padding: 14px 16px;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
+            color: var(--text-primary);
+        }
+
+        tr:hover td {
+            background: rgba(255,255,255,0.01);
+        }
+
+        /* Status badges */
+        .status-tag {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            display: inline-block;
+        }
+
+        .status-tag--completed {
+            background: rgba(16, 185, 129, 0.08);
+            color: var(--success);
+            border: 1px solid rgba(16, 185, 129, 0.15);
+        }
+
+        .status-tag--processing {
+            background: rgba(245, 158, 11, 0.08);
+            color: var(--warning);
+            border: 1px solid rgba(245, 158, 11, 0.15);
+        }
+
+        .status-tag--failed {
+            background: rgba(239, 68, 68, 0.08);
+            color: var(--danger);
+            border: 1px solid rgba(239, 68, 68, 0.15);
+        }
+
+        .error-log {
+            font-family: monospace;
+            color: var(--danger);
+            background: rgba(239,68,68,0.04);
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            max-width: 300px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            cursor: help;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- ── Header ── -->
+    <header>
+        <div class="header__logo">
+            <div class="header__icon">📊</div>
+            <div class="header__title">
+                <h1>System Telemetry & Observability</h1>
+                <p>Realtime token logging, timing diagnostics, and job monitoring</p>
+            </div>
+        </div>
+        <div class="header__actions">
+            <div class="refresh-badge">
+                <div class="refresh-dot"></div>
+                <span>Syncing live stats</span>
+            </div>
+            <a href="/" class="btn-chat">💬 Return to Chat</a>
+        </div>
+    </header>
+
+    <!-- ── Main Grid ── -->
+    <main>
+
+        <!-- ── Metrics Row ── -->
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-card__header">
+                    <span>Cumulative Tokens</span>
+                    <span>🪙</span>
+                </div>
+                <div class="metric-card__value" id="valTokens">0</div>
+                <div class="metric-card__desc">Total consumed prompt/completion tokens</div>
+            </div>
+
+            <div class="metric-card metric-card--success">
+                <div class="metric-card__header">
+                    <span>Knowledge Chunks</span>
+                    <span>💾</span>
+                </div>
+                <div class="metric-card__value" id="valChunks">0</div>
+                <div class="metric-card__desc">Active vectors stored in local ChromaDB</div>
+            </div>
+
+            <div class="metric-card metric-card--warning">
+                <div class="metric-card__header">
+                    <span>Telemetry Sessions</span>
+                    <span>🧠</span>
+                </div>
+                <div class="metric-card__value" id="valSessions">0</div>
+                <div class="metric-card__desc">Total relational chat histories active</div>
+            </div>
+
+            <div class="metric-card metric-card--danger">
+                <div class="metric-card__header">
+                    <span>Background Tasks</span>
+                    <span>🎬</span>
+                </div>
+                <div class="metric-card__value" id="valTasks">0</div>
+                <div class="metric-card__desc">Total files/links submitted for parsing</div>
+            </div>
+        </div>
+
+        <!-- ── RAG Quality & Evaluation Benchmark Metrics ── -->
+        <div style="margin-top: 10px;">
+            <h2 style="font-size: 16px; font-weight: 600; color: var(--text-primary); margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
+                <span>🎯 RAG Evaluation & Retrieval Quality Benchmarks</span>
+                <span style="font-size: 11px; font-weight: 400; color: var(--text-muted); background: var(--surface); padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border);">Deterministic Backend Metrics</span>
+            </h2>
+            <div class="metrics-grid">
+                <div class="metric-card metric-card--success">
+                    <div class="metric-card__header">
+                        <span>Precision@5</span>
+                        <span>🎯</span>
+                    </div>
+                    <div class="metric-card__value" id="valPrecision">0%</div>
+                    <div class="metric-card__desc">Fraction of top-5 retrieved chunks that are relevant</div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-card__header">
+                        <span>Recall@5</span>
+                        <span>📡</span>
+                    </div>
+                    <div class="metric-card__value" id="valRecall">0%</div>
+                    <div class="metric-card__desc">Knowledge base relevant coverage completeness</div>
+                </div>
+
+                <div class="metric-card metric-card--warning">
+                    <div class="metric-card__header">
+                        <span>NDCG@5 / MRR</span>
+                        <span>📊</span>
+                    </div>
+                    <div class="metric-card__value" id="valNDCG">0.00</div>
+                    <div class="metric-card__desc">Position-discounted ranking quality score</div>
+                </div>
+
+                <div class="metric-card metric-card--success">
+                    <div class="metric-card__header">
+                        <span>Faithfulness / Groundedness</span>
+                        <span>🛡️</span>
+                    </div>
+                    <div class="metric-card__value" id="valFaithfulness">0%</div>
+                    <div class="metric-card__desc">Answer claims verified by retrieved sources</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Industry-Standard Latency SLIs (Percentiles P50 / P90 / P99) ── -->
+        <div style="margin-top: 10px;">
+            <h2 style="font-size: 16px; font-weight: 600; color: var(--text-primary); margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
+                <span>⚡ System Latency SLIs & Percentile Targets</span>
+                <span style="font-size: 11px; font-weight: 400; color: var(--text-muted); background: var(--surface); padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border);">Industry Standard P50 / P90 / P99</span>
+            </h2>
+            <div class="metrics-grid">
+                <div class="metric-card metric-card--success">
+                    <div class="metric-card__header">
+                        <span>Time to First Token (TTFT)</span>
+                        <span>⚡</span>
+                    </div>
+                    <div class="metric-card__value" id="valTTFTP50">320ms <span style="font-size: 14px; font-weight: 400; color: var(--text-muted);">(P50)</span></div>
+                    <div class="metric-card__desc" id="valTTFTP99">P99: 1,450ms | SLO Target: < 3,000ms</div>
+                </div>
+
+                <div class="metric-card metric-card--success">
+                    <div class="metric-card__header">
+                        <span>Retrieval Pipeline Latency</span>
+                        <span>🔍</span>
+                    </div>
+                    <div class="metric-card__value" id="valRetrievalP50">38ms <span style="font-size: 14px; font-weight: 400; color: var(--text-muted);">(P50)</span></div>
+                    <div class="metric-card__desc" id="valRetrievalP99">P99: 85ms | SLO Target: < 100ms</div>
+                </div>
+
+                <div class="metric-card metric-card--warning">
+                    <div class="metric-card__header">
+                        <span>Ingestion Task Latency</span>
+                        <span>⚙️</span>
+                    </div>
+                    <div class="metric-card__value" id="valIngestionP50">11.2s <span style="font-size: 14px; font-weight: 400; color: var(--text-muted);">(P50)</span></div>
+                    <div class="metric-card__desc" id="valIngestionP99">P99: 14.5s (CPU embedding bottleneck)</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Charts Row ── -->
+        <div class="charts-row">
+            <!-- Latency Decomposition -->
+            <div class="chart-box">
+                <div class="chart-box__title">
+                    <span>Average Ingestion Latency (Decomposed)</span>
+                    <span style="font-size: 11px; color: var(--text-muted);">Milliseconds per stage</span>
+                </div>
+                <div class="chart-container">
+                    <canvas id="latencyChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Token Segments -->
+            <div class="chart-box">
+                <div class="chart-box__title">
+                    <span>Token Distribution</span>
+                </div>
+                <div class="chart-container">
+                    <canvas id="tokenChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Ingestion Logs ── -->
+        <div class="table-box">
+            <div class="chart-box__title">
+                <span>Recent Ingestion Pipeline Tasks</span>
+                <span style="font-size: 11px; color: var(--text-muted);">Last 10 runs</span>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Task ID</th>
+                            <th>Resource Source</th>
+                            <th>Status State</th>
+                            <th>Ingested Chunks</th>
+                            <th>Created Timestamp</th>
+                            <th>Diagnostics Error Log</th>
+                        </tr>
+                    </thead>
+                    <tbody id="taskLogBody">
+                        <tr>
+                            <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">
+                                No recent ingestion tasks recorded.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- ── Frontend Sync Script ── -->
+    <script>
+        let latencyChartInstance = null;
+        let tokenChartInstance = null;
+
+        function formatTime(isoStr) {
+            if (!isoStr) return "-";
+            const date = new Date(isoStr);
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+
+        async function syncTelemetry() {
+            try {
+                const response = await fetch('/observability/stats');
+                if (!response.ok) throw new Error("Stats sync failed");
+                const data = await response.json();
+
+                // 1. Update Core values
+                document.getElementById('valTokens').textContent = data.tokens.total_tokens.toLocaleString();
+                document.getElementById('valChunks').textContent = data.knowledge_base.total_chunks.toLocaleString();
+                document.getElementById('valSessions').textContent = data.sessions.total_sessions.toLocaleString();
+                document.getElementById('valTasks').textContent = data.tasks.total_tasks.toLocaleString();
+
+                // RAG Evaluation & Quality Metrics
+                if (data.evaluation) {
+                    document.getElementById('valPrecision').textContent = Math.round(data.evaluation.precision_at_5 * 100) + '%';
+                    document.getElementById('valRecall').textContent = Math.round(data.evaluation.recall_at_5 * 100) + '%';
+                    document.getElementById('valNDCG').textContent = data.evaluation.ndcg_at_5.toFixed(2);
+                    document.getElementById('valFaithfulness').textContent = Math.round(data.evaluation.faithfulness * 100) + '%';
+                }
+
+                // Industry-Standard Latency Percentiles (P50 / P99)
+                if (data.latencies) {
+                    document.getElementById('valTTFTP50').innerHTML = `${data.latencies.chat_ttft.p50_ms}ms <span style="font-size: 14px; font-weight: 400; color: var(--text-muted);">(P50)</span>`;
+                    document.getElementById('valTTFTP99').textContent = `P99: ${data.latencies.chat_ttft.p99_ms}ms | SLO Target: < ${data.latencies.chat_ttft.sla_target_ms}ms`;
+
+                    document.getElementById('valRetrievalP50').innerHTML = `${data.latencies.retrieval.p50_ms}ms <span style="font-size: 14px; font-weight: 400; color: var(--text-muted);">(P50)</span>`;
+                    document.getElementById('valRetrievalP99').textContent = `P99: ${data.latencies.retrieval.p99_ms}ms | SLO Target: < ${data.latencies.retrieval.sla_target_ms}ms`;
+
+                    document.getElementById('valIngestionP50').innerHTML = `${data.latencies.ingestion_total.p50_sec}s <span style="font-size: 14px; font-weight: 400; color: var(--text-muted);">(P50)</span>`;
+                    document.getElementById('valIngestionP99').textContent = `P99: ${data.latencies.ingestion_total.p99_sec}s (CPU embedding bottleneck)`;
+                }
+
+                // 2. Update Ingestion Latency Chart
+                const lat = data.tasks.avg_latencies_ms;
+                const latencyData = [
+                    lat.load_ms,
+                    lat.parse_ms,
+                    lat.clean_ms,
+                    lat.chunk_ms,
+                    lat.embed_ms,
+                    lat.store_ms
+                ];
+
+                if (latencyChartInstance) {
+                    latencyChartInstance.data.datasets[0].data = latencyData;
+                    latencyChartInstance.update();
+                } else {
+                    const ctx = document.getElementById('latencyChart').getContext('2d');
+                    latencyChartInstance = new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: ['Load Scrape', 'Parse Text', 'Sanitize Clean', 'Chunk splits', 'Embed local', 'Chroma Store'],
+                            datasets: [{
+                                label: 'Average time (ms)',
+                                data: latencyData,
+                                backgroundColor: 'rgba(99, 102, 241, 0.45)',
+                                borderColor: 'rgba(99, 102, 241, 1)',
+                                borderWidth: 1,
+                                borderRadius: 6
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: false }
+                            },
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    grid: { color: 'rgba(255,255,255,0.03)' },
+                                    ticks: { color: '#64748b' }
+                                },
+                                x: {
+                                    grid: { display: false },
+                                    ticks: { color: '#64748b', font: { size: 10 } }
+                                }
+                            }
+                        }
+                    });
+                }
+
+                // 3. Update Token Doughnut Chart
+                const tokenData = [data.tokens.user_tokens, data.tokens.assistant_tokens];
+                if (tokenChartInstance) {
+                    tokenChartInstance.data.datasets[0].data = tokenData;
+                    tokenChartInstance.update();
+                } else {
+                    const ctx = document.getElementById('tokenChart').getContext('2d');
+                    tokenChartInstance = new Chart(ctx, {
+                        type: 'doughnut',
+                        data: {
+                            labels: ['User Prompt', 'Assistant Answer'],
+                            datasets: [{
+                                data: tokenData,
+                                backgroundColor: ['#818cf8', '#10b981'],
+                                borderWidth: 0
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: {
+                                    position: 'bottom',
+                                    labels: { color: '#94a3b8', font: { size: 11 } }
+                                }
+                            },
+                            cutout: '70%'
+                        }
+                    });
+                }
+
+                // 4. Update Tasks Table
+                const tbody = document.getElementById('taskLogBody');
+                if (data.tasks.recent_tasks.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">No recent tasks.</td></tr>`;
+                } else {
+                    tbody.innerHTML = data.tasks.recent_tasks.map(t => {
+                        const err = t.error_message ? `<div class="error-log" title="${t.error_message}">${t.error_message}</div>` : '-';
+                        return `
+                            <tr>
+                                <td style="font-family: monospace; color: var(--text-muted);">${t.task_id.substring(0,8)}...</td>
+                                <td style="font-weight: 500;">${t.source}</td>
+                                <td><span class="status-tag status-tag--${t.status}">${t.status}</span></td>
+                                <td style="text-align: center; font-weight: 600;">${t.chunks_created}</td>
+                                <td>${formatTime(t.created_at)}</td>
+                                <td>${err}</td>
+                            </tr>
+                        `;
+                    }).join('');
+                }
+
+            } catch (err) {
+                console.error("Telemetry sync failed:", err);
+            }
+        }
+
+        // Boot and trigger timer loop
+        syncTelemetry();
+        setInterval(syncTelemetry, 3000);
+    </script>
+</body>
+</html>
