@@ -12,7 +12,7 @@
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
         },
         "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:charankudayagiri-max/Rag-chatbot-AWS:*"
+          "token.actions.githubusercontent.com:sub": "repo:charankudayagiri-max@233534197/Rag-chatbot-AWS@1347604831:*"
         }
       }
     }
